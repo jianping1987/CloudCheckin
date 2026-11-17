@@ -1,214 +1,89 @@
-# CloudCheckin
+# 樱花 SakuraFrp 自动签到（原计划部署、只跑樱花）
 
-<div align="center">
-  <picture>
-    <img src="https://cdn.jsdelivr.net/gh/timerring/scratchpad2023/2024/2025-06-01-17-47-19.png" alt="workflow"  width="200" height="100"/>
-  </picture>
+按上游 [timerring/CloudCheckin](https://github.com/timerring/CloudCheckin) 的原架构部署，
+但只保留樱花一个平台：CircleCI 跑签到脚本，Cloudflare Worker 每天定时触发。
 
-基于 CI/CD 以及 Cloudflare Workers 实现多平台自动签到以及答题。
+## 架构
 
-[English Version](./README-en.md) |
-中文版本
-</div>
-
-## 功能
-> 欢迎 :star:，添加更多平台欢迎 issue 或者 PR。
-
-每天自动完成平台任务，完成以后会通过 telegram 机器人通知，如果失败则会直接通过 CircleCI 发送邮件通知。
-
-- **Nodeseek**
-  - 自动签到
-- **Deepflood**
-  - 自动签到
-- **V2EX**
-  - 自动签到
-- **一亩三分地**
-  - 自动签到
-  - 自动答题
-- **SakuraFrp**
-  - 自动登录并签到
-
-## 架构及时序图
-
-<div align="center">
-<img src="https://cdn.jsdelivr.net/gh/timerring/scratchpad2023/2024/2025-06-01-17-53-56.png" width="50%" alt="Arch">
-</div>
-
-```mermaid
-sequenceDiagram
-    participant User as User
-    participant CF as Cloudflare Worker<br/>(Scheduler)
-    participant CCI as CircleCI<br/>(CI/CD Pipeline)
-    participant SP as Platforms
-    participant TC as 2captcha
-    
-    Note over User: Configure Github secrets only once
-    User-->>CF: Auto deploy cloudlflare workers
-    User-->>CCI: Auto sync the secrets to CircleCI
-
-    rect rgb(240, 248, 255)
-        Note over CF: Cron runs every day
-
-        CF->>+CCI: Trigger Webhook
-        Note over CCI: Start jobs
-
-        loop Loop platforms
-            CCI->>+SP: Send Request checkin/QA<br/>(with Cookie)
-            
-            alt Request captcha
-                SP->>+TC: request 2captcha
-                TC->>-SP: bypass captcha
-            end
-            
-            SP->>-CCI: Return Response
-        end
-
-        alt Request success
-            CCI->>+User: Send notification<br/>(TELEGRAM_BOT)
-        else Request fail
-            CCI->>+User: Send email<br/>(CircleCI)
-        end
-
-        CCI-->>-CF: Completed
-        Note over CF: Wait for next turn
-    end
+```
+Cloudflare Worker（每天 00:00 UTC 定时，见 wrangler.toml）
+  → POST CircleCI custom webhook
+    → CircleCI 跑 .circleci/config.yml 里的 sakurafrp job
+      → python -m sakurafrp.sakurafrp 登录樱花、过 GeeTest 验证码、签到领流量
 ```
 
-## 快速开始
+## 需要准备的东西（共 7 个必填 + 2 个可选）
 
-Fork 本仓库到你自己的仓库，然后添加对应的配置项到仓库的 secrets 中（在 `settings -> secrets and variables -> actions -> new repository secret`）。
+先在下面 3 个地方注册 / 拿到：
 
-### 注册 [CircleCI](https://circleci.com/)
+### 1. CircleCI（https://circleci.com/，免费版够用）
+- 用 GitHub 账号登录，在 CircleCI 里添加你的 Fork 仓库为 Project，
+  **必须用 GitHub App 方式接入**（custom webhook 只支持 GitHub App 项目，不支持旧的 OAuth 方式）。
+- Personal API Token：https://app.circleci.com/settings/user/tokens 申请一个
+  → GitHub Secret `CIRCLECI_TOKEN`
+- Organization ID：CircleCI 左侧 Organization Settings 里复制
+  → GitHub Secret `CIRCLECI_ORG_ID`
 
-[CircleCI](https://circleci.com/) 是一个优秀的 CI/CD 平台，Free plan 的 `30,000 credits/mo, that’s up to 6,000 build mins` 完全可以支撑起本项目的所有需求。
+### 2. CircleCI custom webhook（最容易错的一步）
+在 CircleCI 网页里：选你的组织 → Projects → 找到 CloudCheckin 项目 →
+Project Settings → Project Setup → 如果没有 pipeline 点 Add Pipeline →
+在 pipeline 框底部点 **Custom webhook +**：
+- 名字随便填，例如 `sakura-daily`
+- Event source 随便填，例如 `cloudflare-worker`
+- Branch 填 `main`
+- 点 Save，会生成一个 **Webhook URL** 和一个 **secret**（secret 只显示一次，马上复制）
 
-详细的注册教程请见 [CloudCheckin Wiki](https://github.com/timerring/CloudCheckin/wiki/CircleCI-Registeration)。
+`CIRCLECI_WEBHOOK_URL` 的填法是两者拼起来：
 
-> [!IMPORTANT]
-> **注意 trigger 的 `CIRCLECI_WEBHOOK_URL` 拼接完成后填写在 Github Actions 的 secrets 中**。
-
-### 申请 CircleCI Token
-
-在 [CircleCI](https://app.circleci.com/settings/user/tokens) 页面申请 Token 即可，并且添加到仓库的 secrets 中，命名为 `CIRCLECI_TOKEN`。
-
-### 复制 Orgid
-
-请在你创建的 Organization Settings 里找到 Organization ID，并且添加到仓库的 secrets 中，命名为 `CIRCLECI_ORG_ID`。
-
-![](https://cdn.jsdelivr.net/gh/timerring/scratchpad2023/2024/2025-05-30-13-25-46.png)
-
-### 配置 Cloudflare Worker
-
-1. 登录 [Cloudflare](https://dash.cloudflare.com/login) 账号，[在 `Profile` 页面](https://dash.cloudflare.com/profile/api-tokens) 创建 `Create Token`(建议 `Edit Cloudflare Workers` 模板保持默认就好)。
-2. 将该 Token 添加到仓库的 secrets 中，命名为 `CLOUDFLARE_API_TOKEN`。
-
-### 设置任务定时
-
-可以自行修改 `wrangler.toml` 设置任务定时 cron 字段，注意执行时间固定为 UTC 时区，北京时间为 UTC+8 时区，请自行转换时差。
-
-https://github.com/timerring/CloudCheckin/blob/0b719258ab4f5f746b067798eb2a4185a71631f7/wrangler.toml#L6
-
-### 配置平台
-
-> 如果不需要某个平台，可以直接编辑删除 `.circleci/config.yml` 目录下该平台对应的项即可，例如无需一亩三分地，可以考虑删除 57-58 行。
-
-#### 配置 Telegram 通知
-
-1. 按照 [telegram bot](https://core.telegram.org/bots/features#botfather) 的说明创建一个 telegram 机器人并获取 `token`
-2. 将机器人添加为您的联系人并发送一条消息。然后访问 https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates 获取 `chat id`（将 `{TELEGRAM_TOKEN}` 替换为步骤1中获得的 token）
-3. 将 `token` 和 `chat id` 添加到仓库密钥中，分别命名为 `TELEGRAM_TOKEN` 和 `TELEGRAM_CHAT_ID`
-
-#### 配置签到平台
-
-<details>
-<summary>配置 Nodeseek/Deepflood 签到</summary>
-
-1. 从 Nodeseek/Deepflood 网站获取 `cookie`（获取方法请参考 [COOKIE 获取教程](https://blog.timerring.com/posts/the-way-to-get-cookie/)）
-2. 将 `cookie` 添加到仓库密钥中，命名为 `NODESEEK_COOKIE`/`DEEPFLOOD_COOKIE`
-</details>
-
-
-<details>
-<summary>配置 V2EX 签到</summary>
-
-1. 从 V2EX 网站获取 `cookie`（获取方法请参考 [COOKIE 获取教程](https://blog.timerring.com/posts/the-way-to-get-cookie/)）
-2. 注意，由于 V2EX 的 cookie 包含 `"` 以及 `$` 特殊字符，可能会导致 sh 中传递 secrets 失败，因此需要转义这两个特殊字符，简单替换脚本为 `echo '你的V2EX cookie' | sed 's/["$]/\\&/g'`。
-3. 将转义后的 `cookie` 添加到仓库密钥中，命名为 `V2EX_COOKIE`
-</details>
-
-<details>
-<summary>配置 一亩三分地 签到及答题</summary>
-
-1. 从 一亩三分地 网站获取 `cookie`（获取方法请参考 [COOKIE 获取教程](https://blog.timerring.com/posts/the-way-to-get-cookie/)）
-2. 将 `cookie` 添加到仓库密钥中，命名为 `ONEPOINT3ACRES_COOKIE`
-3. 从 [2captcha](https://2captcha.com/) 充值获取 `api key`，(由于一亩三分地的签到以及答题需要通过 Cloudflare Turnstile 的验证，因此这里通过 2captcha 的 api 来解决验证问题)
-   - 注意： 2captcha 的 api 需要付费，3 美元起充，支持支付宝。每次成功通过验证约 0.00145 美元，3 美元能用 2068 次，约 2.83 年。
-4. 将 `api key` 添加到仓库密钥中，命名为 `TWOCAPTCHA_APIKEY`
-</details>
-
-<details>
-<summary>配置 SakuraFrp 签到</summary>
-
-1. 注册 [SakuraFrp](https://www.natfrp.com/) 账号，获取登录用户名和密码
-2. 将用户名和密码添加到仓库密钥中，命名为 `SAKURAFRP_USERNAME` 和 `SAKURAFRP_PASSWORD`
-3. 从 [MiMo 开放平台](https://platform.xiaomimimo.com/) 获取 `api key`（由于 SakuraFrp 签到需要通过 GeeTest 九宫格验证码，因此这里使用 MiMo 视觉模型识别验证码）
-   - 使用 MiMo `mimo-v2.6-flash` 视觉模型，费用按开放平台当前价格和实际 token 用量计算。
-4. 将 `api key` 添加到仓库密钥中，命名为 `SAKURAFRP_MIMO_APIKEY`
-
-> 采用纯 HTTP 协议解决 GeeTest v3 验证码（AES-CBC + RSA 加密），无需 Playwright/浏览器，每次签到仅需 2-3 秒。
-</details>
-
-#### 同步配置
-
-配置完成所有内容后，请手动执行一次 `Setup CircleCI Context and Secrets` 以及 `Deploy Cloudflare Worker` workflow 确保配置 secrets 通过 CircleCI CLI 正确同步至 CircleCI contexts secrets，并将 Cloudflare Worker 正确部署。（Actions -> `Setup CircleCI Context and Secrets` -> `Run workflow` 以及 Actions -> `Deploy Cloudflare Worker` -> `Run workflow`）
-
-> [!IMPORTANT]
-> Cookie 或登录凭据失效会导致签到失败。请更新对应平台的仓库 Secrets，再手动执行 `Setup CircleCI Context and Secrets` workflow 将配置同步到 CircleCI。
-
-## 本地调试
-
-```bash
-# 安装依赖
-pip install -r requirements.txt
-
-# 复制环境变量模板并填入你的配置
-cp .env.localtest.example .env
-
-# 运行签到脚本
-python -m nodeseek.nodeseek
-python -m deepflood.deepflood
-python -m v2ex.v2ex
-python -m onepoint3acres.onepoint3acres
-python -m sakurafrp.sakurafrp
+```
+<Webhook URL>?secret=<secret>
 ```
 
-## 常见问题
+例如 `https://internal.circleci.com/private/soc/e/xxxx-xxxx?secret=yyyy`
+→ GitHub Secret `CIRCLECI_WEBHOOK_URL`
 
-1. 签到提示 `The cookie is overdated` 或账号登录状态失效怎么办？
+### 3. Cloudflare（https://dash.cloudflare.com/）
+- Profile → API Tokens → Create Token → 用 `Edit Cloudflare Workers` 模板
+  → GitHub Secret `CLOUDFLARE_API_TOKEN`
 
-   重新获取对应平台的 Cookie，并更新仓库中的 GitHub Actions Secret。然后前往 `Actions`，手动运行一次 `Setup CircleCI Context and Secrets` workflow，这一步会自动将更新后的变量同步到 CircleCI Context，然后所有功能就会恢复正常。
+### 4. 樱花 + MiMo（签到本身要用的）
+| Secret 名 | 内容 |
+|---|---|
+| `SAKURAFRP_USERNAME` | 樱花账号用户名（https://www.natfrp.com） |
+| `SAKURAFRP_PASSWORD` | 樱花账号密码 |
+| `SAKURAFRP_MIMO_APIKEY` | MiMo 开放平台 API Key（https://platform.xiaomimimo.com/，模型 `mimo-v2.6-flash`，用于识别九宫格验证码） |
+| `TELEGRAM_TOKEN`（可选） | Telegram 机器人 token |
+| `TELEGRAM_CHAT_ID`（可选） | 你的 Telegram chat id |
 
-2. 为什么要采用 CircleCI，不直接用 Github Actions？
-   
-   直接用 Github Actions 容易导致潜在的仓库被封风险，尽管本项目一天只触发一次请求不像 upptime 等开源项目有超高的并发请求量，但是本着本分的原则，还是不要给 Github 添加过多负担。CircleCI 同样是优秀的 CI/CD 平台，Free plan 的 30,000 credits/mo, that’s up to 6,000 build mins 完全可以支撑起本项目的所有需求，另外 CircleCI 的不同 Project 间的 contexts 设计思想相较于一般的 CI/CD 有很大程度上的创新，更多用户使用并且熟悉 CircleCI，对于用户以及平台来说都是双方受益的。
+上面 9 个全部填到你的 Fork 仓库：Settings → Secrets and variables → Actions → New repository secret。
+**账号密码和 key 只填在 Secrets 里，不要写进代码、不要提交到仓库。**
 
-3. 为什么不采用 Cloudflare Worker 等 Serverless 函数计算？
-   
-   已经尝试过 Cloudflare Worker，本地 wrangler dev 有效，但是 deploy Cloudflare Worker 之后，由于 Cloudflare edge 请求会带有明显的 cf 标志，很多平台已经限制了 Cloudflare Worker 的请求。
+## 部署步骤（按顺序）
 
-4. 为什么要切换到 Cloudflare Worker 作为 Webhook 触发器，不用 CircleCI 的 Scheduled？
-   根据 [CircleCI 的最新条款](https://circleci.com/docs/version-control-system-integration-overview/#pipeline-triggers-and-integrations)，Scheduled pipelines 将不对 `GitHub App` 下的个人仓库开放，因此需要切换到 [Custom Webhook](https://circleci.com/docs/custom-webhooks/) 的形式，通过 Cloudflare Worker 作为定时触发器，当然你也可以采用[其他方式调用 Webhook](https://circleci.com/docs/triggers-overview/#trigger-a-pipeline-from-a-custom-webhook)，只需要定时调用 Webhook 的接口即可，这里我采用了 Cloudflare Worker 作为定时触发器。
+1. 把本目录所有文件推到你的 Fork 仓库，覆盖原文件（`.circleci/config.yml` 已精简为只跑 sakurafrp）。
+2. 按上面填好 9 个 GitHub Secrets。
+3. Actions → `Setup CircleCI Context and Secrets` → Run workflow。
+   这一步会用 CircleCI CLI 在 CircleCI 里新建 `checkincontext`，并把樱花那几个 Secrets 同步过去。
+   **以后每次改樱花账号密码或 MiMo key，都要先改 GitHub Secrets，再手动跑一次这个 workflow 同步，否则 CircleCI 用的还是旧的。**
+4. Actions → `Deploy Cloudflare Worker` → Run workflow。
+   这一步会把 `worker.js` 部署到 Cloudflare，并把 `CIRCLECI_WEBHOOK_URL` 写进 Worker 的 secret。
+5. 验证：去 CircleCI 网页，手动触发一次 pipeline（或等 Worker 定时触发），
+   看 sakurafrp job 的日志出现 `SakuraFrp check-in successful` 或 `Already signed in today`，
+   再去樱花官网确认流量增加了。
 
-## 贡献
+## 定时时间
 
-欢迎提交你需要的平台，语言不限制。
+`wrangler.toml` 里现在是 `crons = ["0 0 * * *"]`，即每天 UTC 00:00，
+**北京时间 08:00**（原仓库注释写的是 UTC 2:00 / 北京时间 10:00，那是注释写错了，
+以 cron 表达式为准）。想改时间就改这个字段后重新跑第 4 步。
 
-> 如果你是 Python 用户，建议使用 `curl_cffi` 库而不是 `requests` 等库，`curl_cffi` 能够更精确地模拟浏览器发送请求，极大程度上防止网站风控。
+## 常见报错
 
-## 参考
-- [curl_cffi](https://github.com/lexiforest/curl_cffi)
-- [2captcha](https://github.com/2captcha/2captcha-python)
-- [1point3acres](https://github.com/harryhare/1point3acres)
-- [V2EX](https://github.com/CruiseTian/action-hub)
-- [nodeseek](https://github.com/xinycai/nodeseek_signin)
-- [SakuraFRP HTTP Protocol (GeeTest v3 solve)](https://github.com/lyon-le/sakurafrp-auto-sign/blob/main/Solve.md)
+| 报错 / 现象 | 原因 / 办法 |
+|---|---|
+| `Setup CircleCI` workflow 失败，提示 token / org id 无效 | `CIRCLECI_TOKEN` 或 `CIRCLECI_ORG_ID` 填错，重新复制 |
+| Worker 部署成功但每天不触发 | `CIRCLECI_WEBHOOK_URL` 拼错（漏了 `?secret=`），或 webhook 是在 OAuth 项目上建的，custom webhook 只支持 GitHub App 项目 |
+| CircleCI job 提示 `Set SAKURAFRP_USERNAME + SAKURAFRP_PASSWORD` | Secrets 没同步到 CircleCI：先确认 GitHub Secrets 填了，再重新跑 `Setup CircleCI Context and Secrets` |
+| `Login captcha failed after 10 attempts` | MiMo key 无效 / 余额不足，检查 `SAKURAFRP_MIMO_APIKEY`，同步后重跑 |
+| `Login verification failed` | 樱花账号密码错，或登录接口变了 |
+| 其他平台的 job 失败 | 本版已删掉其他平台，只剩 sakurafrp；如果还看到别的 job，说明 `.circleci/config.yml` 没覆盖成功 |
