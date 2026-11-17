@@ -54,11 +54,6 @@ jobs:
           # List of secrets to migrate
           store_secret "TELEGRAM_TOKEN" "${{ secrets.TELEGRAM_TOKEN }}"
           store_secret "TELEGRAM_CHAT_ID" "${{ secrets.TELEGRAM_CHAT_ID }}"
-          store_secret "NODESEEK_COOKIE" "${{ secrets.NODESEEK_COOKIE }}"
-          store_secret "V2EX_COOKIE" "${{ secrets.V2EX_COOKIE }}"
-          store_secret "ONEPOINT3ACRES_COOKIE" "${{ secrets.ONEPOINT3ACRES_COOKIE }}"
-          store_secret "TWOCAPTCHA_APIKEY" "${{ secrets.TWOCAPTCHA_APIKEY }}"
-          store_secret "DEEPFLOOD_COOKIE" "${{ secrets.DEEPFLOOD_COOKIE }}"
           store_secret "SAKURAFRP_USERNAME" "${{ secrets.SAKURAFRP_USERNAME }}"
           store_secret "SAKURAFRP_PASSWORD" "${{ secrets.SAKURAFRP_PASSWORD }}"
           store_secret "SAKURAFRP_MIMO_APIKEY" "${{ secrets.SAKURAFRP_MIMO_APIKEY }}"
