@@ -46,14 +46,16 @@ Project Settings → Project Setup → 如果没有 pipeline 点 Add Pipeline �
 - Profile → API Tokens → Create Token → 用 `Edit Cloudflare Workers` 模板
   → GitHub Secret `CLOUDFLARE_API_TOKEN`
 
-### 4. 樱花 + MiMo（签到本身要用的）
+### 4. 樱花 + Gemini（签到本身要用的）
 | Secret 名 | 内容 |
 |---|---|
 | `SAKURAFRP_USERNAME` | 樱花账号用户名（https://www.natfrp.com） |
 | `SAKURAFRP_PASSWORD` | 樱花账号密码 |
-| `SAKURAFRP_MIMO_APIKEY` | MiMo 开放平台 API Key（https://platform.xiaomimimo.com/，模型 `mimo-v2.6-flash`，用于识别九宫格验证码） |
+| `SAKURAFRP_VISION_APIKEY` | 识图模型 API Key：默认 Google Gemini 免费版，在 https://aistudio.google.com/ 领 key（模型 `gemini-2.5-flash`，用于识别九宫格验证码，不用绑卡） |
 | `TELEGRAM_TOKEN`（可选） | Telegram 机器人 token |
 | `TELEGRAM_CHAT_ID`（可选） | 你的 Telegram chat id |
+
+也可以继续用旧名字 `SAKURAFRP_MIMO_APIKEY`：把它的值换成 Gemini key 就行，不用改同步流程。想换别的识图接口可再设 `SAKURAFRP_VISION_BASE_URL` / `SAKURAFRP_VISION_MODEL`。
 
 上面 9 个全部填到你的 Fork 仓库：Settings → Secrets and variables → Actions → New repository secret。
 **账号密码和 key 只填在 Secrets 里，不要写进代码、不要提交到仓库。**
@@ -64,7 +66,7 @@ Project Settings → Project Setup → 如果没有 pipeline 点 Add Pipeline �
 2. 按上面填好 9 个 GitHub Secrets。
 3. Actions → `Setup CircleCI Context and Secrets` → Run workflow。
    这一步会用 CircleCI CLI 在 CircleCI 里新建 `checkincontext`，并把樱花那几个 Secrets 同步过去。
-   **以后每次改樱花账号密码或 MiMo key，都要先改 GitHub Secrets，再手动跑一次这个 workflow 同步，否则 CircleCI 用的还是旧的。**
+   **以后每次改樱花账号密码或识图 key，都要先改 GitHub Secrets，再手动跑一次这个 workflow 同步，否则 CircleCI 用的还是旧的。**
 4. Actions → `Deploy Cloudflare Worker` → Run workflow。
    这一步会把 `worker.js` 部署到 Cloudflare，并把 `CIRCLECI_WEBHOOK_URL` 写进 Worker 的 secret。
 5. 验证：去 CircleCI 网页，手动触发一次 pipeline（或等 Worker 定时触发），
@@ -84,6 +86,6 @@ Project Settings → Project Setup → 如果没有 pipeline 点 Add Pipeline �
 | `Setup CircleCI` workflow 失败，提示 token / org id 无效 | `CIRCLECI_TOKEN` 或 `CIRCLECI_ORG_ID` 填错，重新复制 |
 | Worker 部署成功但每天不触发 | `CIRCLECI_WEBHOOK_URL` 拼错（漏了 `?secret=`），或 webhook 是在 OAuth 项目上建的，custom webhook 只支持 GitHub App 项目 |
 | CircleCI job 提示 `Set SAKURAFRP_USERNAME + SAKURAFRP_PASSWORD` | Secrets 没同步到 CircleCI：先确认 GitHub Secrets 填了，再重新跑 `Setup CircleCI Context and Secrets` |
-| `Login captcha failed after 10 attempts` | MiMo key 无效 / 余额不足，检查 `SAKURAFRP_MIMO_APIKEY`，同步后重跑 |
+| `Login captcha failed after 10 attempts` | 识图 key 无效 / 免费额度用完，检查 `SAKURAFRP_VISION_APIKEY`（Gemini 免费额度在 AI Studio 里看），同步后重跑 |
 | `Login verification failed` | 樱花账号密码错，或登录接口变了 |
 | 其他平台的 job 失败 | 本版已删掉其他平台，只剩 sakurafrp；如果还看到别的 job，说明 `.circleci/config.yml` 没覆盖成功 |

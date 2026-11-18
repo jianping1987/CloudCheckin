@@ -2,9 +2,9 @@
 SakuraFRP auto check-in (pure HTTP protocol, no browser required).
 
 Reverse-engineers GeeTest v3 protocol (AES-CBC + RSA encryption) for the
-captcha handshake, then uses MiMo multimodal AI to recognise the 9-grid
-image captcha.  Entire flow completes in 2-3 seconds per attempt — fast
-enough for CircleCI.
+captcha handshake, then uses a multimodal AI to recognise the 9-grid
+image captcha (Google Gemini free tier by default).  Entire flow
+completes in 2-3 seconds per attempt — fast enough for CircleCI.
 """
 
 import base64
@@ -67,7 +67,9 @@ class NatfrpError(RuntimeError):
 class NatfrpConfig:
     username: str = ""
     password: str = ""
-    mimo_apikey: str = ""
+    vision_apikey: str = ""
+    vision_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
+    vision_model: str = "gemini-2.5-flash"
 
     @classmethod
     def from_env(cls) -> "NatfrpConfig":
@@ -75,8 +77,28 @@ class NatfrpConfig:
         password = os.environ.get("SAKURAFRP_PASSWORD", "").strip()
         if not username or not password:
             raise NatfrpError("Set SAKURAFRP_USERNAME + SAKURAFRP_PASSWORD")
-        mimo_apikey = os.environ.get("SAKURAFRP_MIMO_APIKEY", "").strip()
-        return cls(username=username, password=password, mimo_apikey=mimo_apikey)
+        # New name first; the old MiMo secret name still works, so the
+        # existing CircleCI sync needs no workflow change — just replace
+        # its value with the Gemini key.
+        vision_apikey = (
+            os.environ.get("SAKURAFRP_VISION_APIKEY", "").strip()
+            or os.environ.get("SAKURAFRP_MIMO_APIKEY", "").strip()
+        )
+        vision_base_url = (
+            os.environ.get("SAKURAFRP_VISION_BASE_URL", "").strip()
+            or "https://generativelanguage.googleapis.com/v1beta/openai/"
+        )
+        vision_model = (
+            os.environ.get("SAKURAFRP_VISION_MODEL", "").strip()
+            or "gemini-2.5-flash"
+        )
+        return cls(
+            username=username,
+            password=password,
+            vision_apikey=vision_apikey,
+            vision_base_url=vision_base_url,
+            vision_model=vision_model,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +144,7 @@ def _follow_openid_redirect(client: httpx.Client) -> None:
 
 
 # ---------------------------------------------------------------------------
-# AI captcha recognition (MiMo)
+# AI captcha recognition (vision model)
 # ---------------------------------------------------------------------------
 
 
@@ -133,19 +155,18 @@ def _download_image(url: str) -> bytes:
     return resp.content
 
 
-def _call_mimo(image_url: str, prompt: str, config: NatfrpConfig,
-               model: str = "mimo-v2.6-flash") -> str:
-    """Download a captcha image and send it to MiMo for recognition."""
+def _call_vision(image_url: str, prompt: str, config: NatfrpConfig) -> str:
+    """Download a captcha image and send it to the vision model for recognition."""
     img_bytes = _download_image(image_url)
     b64 = base64.b64encode(img_bytes).decode("utf-8")
 
     client = OpenAI(
-        api_key=config.mimo_apikey,
-        base_url="https://api.xiaomimimo.com/v1",
+        api_key=config.vision_apikey,
+        base_url=config.vision_base_url,
     )
-    response = client.chat.completions.create(
-        model=model,
-        messages=[{
+    kwargs: dict = {
+        "model": config.vision_model,
+        "messages": [{
             "role": "user",
             "content": [
                 {"type": "text", "text": prompt},
@@ -153,10 +174,14 @@ def _call_mimo(image_url: str, prompt: str, config: NatfrpConfig,
                  "image_url": {"url": f"data:image/png;base64,{b64}"}},
             ],
         }],
-        max_completion_tokens=1024,
-        extra_body={"thinking": {"type": "disabled"}},
-    )
-    return response.choices[0].message.content.strip()
+        "max_completion_tokens": 1024,
+    }
+    # MiMo-only option: disable its built-in thinking.
+    if "xiaomimimo" in config.vision_base_url:
+        kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+    response = client.chat.completions.create(**kwargs)
+    content = response.choices[0].message.content or ""
+    return content.strip()
 
 
 def _strip_json_fence(text: str) -> str:
@@ -170,11 +195,11 @@ def _strip_json_fence(text: str) -> str:
 
 def _recognize_nine_grid(image_url: str, config: NatfrpConfig) -> list:
     """
-    Recognise a 9-grid captcha via MiMo.
+    Recognise a 9-grid captcha via the vision model.
     Returns a list of col_row strings, e.g. ["1_1", "3_2"].
     """
-    if not config.mimo_apikey:
-        print("  [AI] no SAKURAFRP_MIMO_APIKEY configured", flush=True)
+    if not config.vision_apikey:
+        print("  [AI] no SAKURAFRP_VISION_APIKEY configured", flush=True)
         return []
 
     prompt = (
@@ -185,7 +210,7 @@ def _recognize_nine_grid(image_url: str, config: NatfrpConfig) -> list:
         "若有类似物品（如气球与热气球），请统一名称。"
         "只输出JSON，不要其他文字。"
     )
-    result_text = _strip_json_fence(_call_mimo(image_url, prompt, config))
+    result_text = _strip_json_fence(_call_vision(image_url, prompt, config))
     print(f"  [AI] raw: {result_text}", flush=True)
 
     try:
@@ -213,8 +238,8 @@ def _recognize_nine_grid(image_url: str, config: NatfrpConfig) -> list:
 
 def _recognize_icon(image_url: str, config: NatfrpConfig) -> list:
     """Recognise an icon/space captcha, returning click coordinate strings."""
-    if not config.mimo_apikey:
-        print("  [AI] no SAKURAFRP_MIMO_APIKEY configured", flush=True)
+    if not config.vision_apikey:
+        print("  [AI] no SAKURAFRP_VISION_APIKEY configured", flush=True)
         return []
 
     prompt = (
@@ -223,7 +248,7 @@ def _recognize_icon(image_url: str, config: NatfrpConfig) -> list:
         '[{"x":100,"y":200},...]。坐标原点在左上角。'
         "只输出JSON，不要其他文字。"
     )
-    result_text = _strip_json_fence(_call_mimo(image_url, prompt, config))
+    result_text = _strip_json_fence(_call_vision(image_url, prompt, config))
     print(f"  [AI] raw: {result_text}", flush=True)
 
     try:
