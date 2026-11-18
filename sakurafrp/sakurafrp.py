@@ -3,7 +3,7 @@ SakuraFRP auto check-in (pure HTTP protocol, no browser required).
 
 Reverse-engineers GeeTest v3 protocol (AES-CBC + RSA encryption) for the
 captcha handshake, then uses a multimodal AI to recognise the 9-grid
-image captcha (Google Gemini free tier by default).  Entire flow
+image captcha (Zhipu GLM-4V-Flash free tier by default).  Entire flow
 completes in 2-3 seconds per attempt — fast enough for CircleCI.
 """
 
@@ -68,8 +68,8 @@ class NatfrpConfig:
     username: str = ""
     password: str = ""
     vision_apikey: str = ""
-    vision_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
-    vision_model: str = "gemini-2.5-flash"
+    vision_base_url: str = "https://open.bigmodel.cn/api/paas/v4"
+    vision_model: str = "glm-4v-flash"
 
     @classmethod
     def from_env(cls) -> "NatfrpConfig":
@@ -79,18 +79,18 @@ class NatfrpConfig:
             raise NatfrpError("Set SAKURAFRP_USERNAME + SAKURAFRP_PASSWORD")
         # New name first; the old MiMo secret name still works, so the
         # existing CircleCI sync needs no workflow change — just replace
-        # its value with the Gemini key.
+        # its value with the Zhipu key.
         vision_apikey = (
             os.environ.get("SAKURAFRP_VISION_APIKEY", "").strip()
             or os.environ.get("SAKURAFRP_MIMO_APIKEY", "").strip()
         )
         vision_base_url = (
             os.environ.get("SAKURAFRP_VISION_BASE_URL", "").strip()
-            or "https://generativelanguage.googleapis.com/v1beta/openai/"
+            or "https://open.bigmodel.cn/api/paas/v4"
         )
         vision_model = (
             os.environ.get("SAKURAFRP_VISION_MODEL", "").strip()
-            or "gemini-2.5-flash"
+            or "glm-4v-flash"
         )
         return cls(
             username=username,
