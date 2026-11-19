@@ -404,6 +404,10 @@ def _do_sign_in(client: httpx.Client, config: NatfrpConfig) -> tuple[bool, str]:
     # already signed?
     resp = client.get("https://www.natfrp.com/cgi/v4/user/info")
     user_info = resp.json()
+    print(
+        f"  user info: {json.dumps(user_info, ensure_ascii=False)}",
+        flush=True,
+    )
     sign_info = user_info.get("sign", {})
     if sign_info.get("signed"):
         days = sign_info.get("days", "?")
