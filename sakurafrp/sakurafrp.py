@@ -393,6 +393,22 @@ def _solve_captcha_loop(crack: GeeTestCrack, config: NatfrpConfig,
 # ---------------------------------------------------------------------------
 
 
+def _traffic_remaining_gib(user_info: dict) -> str | None:
+    """Remaining traffic in GiB, from user info's traffic [used, total] bytes.
+
+    Returns e.g. "15.21", or None when the fields are missing/unexpected.
+    """
+    traffic = user_info.get("traffic")
+    if not isinstance(traffic, (list, tuple)) or len(traffic) < 2:
+        return None
+    try:
+        used, total = float(traffic[0]), float(traffic[1])
+    except (TypeError, ValueError):
+        return None
+    remaining = max(total - used, 0.0)
+    return f"{remaining / (1024 ** 3):.2f}"
+
+
 def _do_sign_in(client: httpx.Client, config: NatfrpConfig) -> tuple[bool, str]:
     """Sign in via HTTP: check status -> GeeTest solve -> POST sign.
 
@@ -404,15 +420,15 @@ def _do_sign_in(client: httpx.Client, config: NatfrpConfig) -> tuple[bool, str]:
     # already signed?
     resp = client.get("https://www.natfrp.com/cgi/v4/user/info")
     user_info = resp.json()
-    print(
-        f"  user info: {json.dumps(user_info, ensure_ascii=False)}",
-        flush=True,
-    )
     sign_info = user_info.get("sign", {})
     if sign_info.get("signed"):
         days = sign_info.get("days", "?")
         print(f"  Already signed in today (streak: {days} days)", flush=True)
-        return True, f"Already signed in today, streak: {days} days"
+        detail = f"Already signed in today, streak: {days} days"
+        remaining = _traffic_remaining_gib(user_info)
+        if remaining is not None:
+            detail = f"{detail}\nTraffic remaining: {remaining} GiB"
+        return True, detail
 
     # get sign-in GeeTest config
     resp = client.get("https://www.natfrp.com/cgi/v4/user/sign?gt")
@@ -469,17 +485,22 @@ def _do_sign_in(client: httpx.Client, config: NatfrpConfig) -> tuple[bool, str]:
         return False, f"Sign-in failed: {sign_result}"
 
     # Reward text comes straight from the sign response when it is a string,
-    # e.g. "运气不错，获得 2.5 GiB 流量。" — also fetch the updated streak.
+    # e.g. "运气不错，获得 2.5 GiB 流量。" — also fetch the updated streak
+    # and the total remaining traffic.
     reward = sign_result if isinstance(sign_result, str) else ""
     streak = ""
+    remaining = ""
     try:
         info = client.get("https://www.natfrp.com/cgi/v4/user/info").json()
         days = info.get("sign", {}).get("days")
         if days is not None:
             streak = f"Streak: {days} days"
+        gib = _traffic_remaining_gib(info)
+        if gib is not None:
+            remaining = f"Traffic remaining: {gib} GiB"
     except Exception:
         pass
-    detail = "\n".join(part for part in (reward, streak) if part)
+    detail = "\n".join(part for part in (reward, streak, remaining) if part)
     return True, detail or "Signed in successfully"
 
 
