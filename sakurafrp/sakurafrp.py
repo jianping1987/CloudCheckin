@@ -393,8 +393,12 @@ def _solve_captcha_loop(crack: GeeTestCrack, config: NatfrpConfig,
 # ---------------------------------------------------------------------------
 
 
-def _do_sign_in(client: httpx.Client, config: NatfrpConfig) -> bool:
-    """Sign in via HTTP: check status -> GeeTest solve -> POST sign."""
+def _do_sign_in(client: httpx.Client, config: NatfrpConfig) -> tuple[bool, str]:
+    """Sign in via HTTP: check status -> GeeTest solve -> POST sign.
+
+    Returns (success, detail): detail is a human-readable summary for the
+    notification, e.g. the streak and the traffic reward.
+    """
     print("[2/2] Signing in ...", flush=True)
 
     # already signed?
@@ -404,7 +408,7 @@ def _do_sign_in(client: httpx.Client, config: NatfrpConfig) -> bool:
     if sign_info.get("signed"):
         days = sign_info.get("days", "?")
         print(f"  Already signed in today (streak: {days} days)", flush=True)
-        return True
+        return True, f"Already signed in today, streak: {days} days"
 
     # get sign-in GeeTest config
     resp = client.get("https://www.natfrp.com/cgi/v4/user/sign?gt")
@@ -454,7 +458,25 @@ def _do_sign_in(client: httpx.Client, config: NatfrpConfig) -> bool:
         flush=True,
     )
 
-    return isinstance(sign_result, str) or sign_result.get("status") == "success"
+    success = isinstance(sign_result, str) or (
+        isinstance(sign_result, dict) and sign_result.get("status") == "success"
+    )
+    if not success:
+        return False, f"Sign-in failed: {sign_result}"
+
+    # Reward text comes straight from the sign response when it is a string,
+    # e.g. "运气不错，获得 2.5 GiB 流量。" — also fetch the updated streak.
+    reward = sign_result if isinstance(sign_result, str) else ""
+    streak = ""
+    try:
+        info = client.get("https://www.natfrp.com/cgi/v4/user/info").json()
+        days = info.get("sign", {}).get("days")
+        if days is not None:
+            streak = f"Streak: {days} days"
+    except Exception:
+        pass
+    detail = "\n".join(part for part in (reward, streak) if part)
+    return True, detail or "Signed in successfully"
 
 
 # ---------------------------------------------------------------------------
@@ -462,7 +484,7 @@ def _do_sign_in(client: httpx.Client, config: NatfrpConfig) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def check_in(config: NatfrpConfig) -> bool:
+def check_in(config: NatfrpConfig) -> tuple[bool, str]:
     client = _login(config)
     try:
         return _do_sign_in(client, config)
@@ -490,11 +512,17 @@ def _notify_if_configured(message: str) -> None:
 def main() -> int:
     load_dotenv()
     try:
-        if check_in(NatfrpConfig.from_env()):
+        success, detail = check_in(NatfrpConfig.from_env())
+        if success:
             message = "SakuraFrp check-in successful"
+            if detail:
+                message = f"{message}\n{detail}"
             print(message, flush=True)
             _notify_if_configured(message)
             return 0
+        message = f"SakuraFrp check-in failed: {detail or 'unknown error'}"
+        print(message, file=sys.stderr, flush=True)
+        _notify_if_configured(message)
     except NatfrpError as exc:
         message = f"SakuraFrp check-in failed: {exc}"
         print(message, file=sys.stderr, flush=True)
